@@ -1,0 +1,128 @@
+trigger:
+  branches:
+    include:
+      - development # The collaboration branch
+  paths:
+    include:
+      - data-factory/*
+
+pool:
+  vmImage: "ubuntu-latest"
+
+variables:
+- name: subscriptionId
+  value: <subscription_ID>
+- name: resourceGroupName
+  value: <resource_group_name>
+- name: dataFactoryName
+  value: <data_factory_name>
+- name: artifactName
+  value: <artifact_name>
+- name: azureRmConnectionName
+  value: <azure_rm_connection_name>
+- name: environment
+  value: <environment_name>
+
+stages:
+  - stage: Build
+    displayName: "Build and Validate"
+    jobs:
+      - job: BuildAndValidate
+        displayName: "Build and Validate Data Factory"
+        steps:
+
+          - task: NodeTool@0
+            inputs:
+              versionSpec: "14.x"
+            displayName: "Install Node.js"
+
+          - task: Npm@1
+            inputs:
+              command: "install"
+              verbose: true
+              workingDir: '$(Build.Repository.LocalPath)/data-factory/'
+            displayName: "Install npm packages"
+
+          - task: Npm@1
+            inputs:
+              command: "custom"
+              workingDir: '$(Build.Repository.LocalPath)/data-factory/'
+              customCommand: "run build validate $(Build.Repository.LocalPath)/data-factory /subscriptions/$(subscriptionId)/resourceGroups/$(resourceGroupName)/providers/Microsoft.DataFactory/factories/$(dataFactoryName)"
+            displayName: "Validate"
+
+          - task: Npm@1
+            inputs:
+              command: "custom"
+              workingDir: '$(Build.Repository.LocalPath)/data-factory/'
+              customCommand: 'run build export $(Build.Repository.LocalPath)/data-factory /subscriptions/$(subscriptionId)/resourceGroups/$(resourceGroupName)/providers/Microsoft.DataFactory/factories/$(dataFactoryName) "ArmTemplate"'
+            displayName: "Validate and Generate ARM template"
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: "$(Build.Repository.LocalPath)/data-factory/ArmTemplate"
+              artifact: $(artifactName)
+              publishLocation: "pipeline"
+            displayName: "Publish artifact"
+
+  - stage: Deploy
+    displayName: "Deploy to $(environment)"
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: deploy_to_env
+        displayName: "Deploy to $(environment)"
+        pool:
+          vmImage: "ubuntu-latest"
+        environment: "$(environment)"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    buildType: 'current'
+                    artifactName: '$(artifactName)'
+                    targetPath: '$(Pipeline.Workspace)'
+                  displayName: "Download ARM template artifact"
+                
+                #Add tasks to stop and start triggers if needed
+
+                - task: toggle-adf-trigger@2
+                  inputs:
+                    azureSubscription: $(azureRmConnectionName)
+                    ResourceGroupName: $(resourceGroupName)
+                    DatafactoryName: $(dataFactoryName)
+                    TriggerStatus: 'stop'
+
+                - task: AzureResourceManagerTemplateDeployment@3
+                  displayName: 'ARM Template deployment: Resource Group scope'
+                  inputs:
+                    azureResourceManagerConnection: $(azureRmConnectionName)
+                    subscriptionId: $(subscriptionId)
+                    resourceGroupName: $(resourceGroupName)
+                    location: 'East US 2'
+                    csmFile: '$(Pipeline.Workspace)/ARMTemplateForFactory.json'
+                    csmParametersFile: '$(Pipeline.Workspace)/ARMTemplateParametersForFactory.json'
+                    overrideParameters: |
+                      -factoryName "$(dataFactoryName)" 
+                      -SOLUTION_KEY_VAULT_LS_properties_typeProperties_baseUrl "<key_vault_url>" 
+                      -PROJECT_DEV_ADLS_LS_properties_typeProperties_url "<adls_url>" 
+
+                # Add tasks to start triggers if needed
+                # Example:
+                - task: toggle-adf-trigger@2
+                  inputs:
+                    azureSubscription: $(azureRmConnectionName)
+                    ResourceGroupName: $(resourceGroupName)
+                    DatafactoryName: $(dataFactoryName)
+                    TriggerStatus: 'start'
+
+                # Add tasks to stop specific triggers if needed
+                # Example:
+                - task: toggle-adf-trigger@2
+                  inputs:
+                    azureSubscription: $(azureRmConnectionName)
+                    ResourceGroupName: $(resourceGroupName)
+                    DatafactoryName: $(dataFactoryName)
+                    TriggerFilter: 'MW_E2OPEN_TRIGGER'
+                    TriggerStatus: 'stop'

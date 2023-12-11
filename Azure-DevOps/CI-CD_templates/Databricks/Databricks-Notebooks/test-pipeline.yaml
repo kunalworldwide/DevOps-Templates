@@ -1,0 +1,115 @@
+trigger: none
+
+# This pipeline is triggered on PRs to the develop branch
+pr:
+- develop
+
+pool:
+  vmImage: ubuntu-latest
+
+
+# Parameters section to configure pipeline.
+parameters:
+- name: project_name
+  type: string
+  default: 'Databricks'
+- name: sonar_project_key
+  type: string
+  default: 'databricks'
+- name: databricks_notebook_path
+  type: string
+  default: './databricks'
+- name: sonar_host_url_secret
+  type: string
+- name: sonar_token_secret
+  type: string
+- name: databricks_host_url_secret
+  type: string
+- name: databricks_token_secret
+  type: string
+- name: NotebooksFolderPath
+  type: string
+- name: PortfolioPath
+  type: string
+- name: WorkspaceFolderPath
+  type: string
+- name: ClusterID
+  type: string
+- name: NotebookName
+  type: string
+- name: WorkspaceName
+  type: string
+- name: ReleaseNotebooks
+  type: boolean
+- name: ExecuteNotebook
+  type: boolean
+
+variables:
+  SONAR_TOKEN: ${{ secrets[parameters.sonar_token_secret] }}
+  SONAR_HOST_URL: ${{ secrets[parameters.sonar_host_url_secret] }}
+  DATABRICKS_HOST_URL: ${{ secrets[parameters.databricks_host_url_secret] }}
+  DATABRICKS_TOKEN: ${{ secrets[parameters.databricks_token_secret] }}
+
+stages:
+- stage: Build
+  displayName: 'Build and Test'
+  jobs:
+  - job: BuildAndTest
+    displayName: 'Build and Test Notebooks'
+    steps:
+
+    # Set up the Python version to be used
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.x'
+        addToPath: true
+    
+
+    # Install pylint for code linting.
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: 'pip install pylint'
+
+    # Install black and flake8 for code formatting and linting.
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: |
+          pip install black flake8
+
+    # Run pylint on python files.
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: |
+          find databricks/ -name "*.py" -exec pylint --output-format=json {} \; > pylint_report.json
+
+    # Run black for code formatting check.
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: |
+          find databricks/ -name "*.py" -exec black --check {} \;
+
+    # Run flake8 for code linting.
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: |
+          find databricks/ -name "*.py" -exec flake8 {} \;
+    #getting coverage report
+    - task: Bash@3
+      inputs:
+        targetType: 'inline'
+        script: |
+          find $(sourceDirectory) -type f -name "*.py" -exec sh -c 'pytest --cov=$(sourceDirectory) --cov-report=xml --junitxml=pytest_report.xml "$@"' _ {} +
+          coverage xml
+      continueOnError: true
+
+    # Publish test results
+    - task: PublishTestResults@2
+      inputs:
+        testRunner: 'JUnit'
+        testResultsFiles: '**/pytest_report.xml'
+        failTaskOnFailedTests: true

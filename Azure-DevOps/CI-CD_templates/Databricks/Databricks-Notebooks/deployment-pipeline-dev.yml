@@ -1,0 +1,82 @@
+# This pipeline is triggered when changes are pushed to the develop branch
+trigger:
+- develop
+
+pool:
+  vmImage: ubuntu-latest
+
+# Parameters section to make the pipeline configurable.
+parameters:
+- name: project_name
+  type: string
+  default: 'Databricks'
+- name: sonar_project_key
+  type: string
+  default: 'databricks'
+- name: databricks_notebook_path
+  type: string
+  default: './databricks'
+- name: sonar_host_url_secret
+  type: string
+- name: sonar_token_secret
+  type: string
+- name: databricks_host_url_secret
+  type: string
+- name: databricks_token_secret
+  type: string
+- name: NotebooksFolderPath
+  type: string
+- name: PortfolioPath
+  type: string
+- name: WorkspaceFolderPath
+  type: string
+- name: ClusterID
+  type: string
+- name: NotebookName
+  type: string
+- name: WorkspaceName
+  type: string
+- name: ReleaseNotebooks
+  type: boolean
+- name: ExecuteNotebook
+  type: boolean
+
+variables:
+  SONAR_TOKEN: ${{ secrets[parameters.sonar_token_secret] }}
+  SONAR_HOST_URL: ${{ secrets[parameters.sonar_host_url_secret] }}
+  DATABRICKS_HOST_URL: ${{ secrets[parameters.databricks_host_url_secret] }}
+  DATABRICKS_TOKEN: ${{ secrets[parameters.databricks_token_secret] }}
+
+jobs:
+- job: Deploy
+  pool:
+    vmImage: 'ubuntu-latest'
+  displayName: Deploy notebooks to Databricks workspace
+  steps:
+  - checkout: self
+
+  # Configure the Databricks CLI
+  - task: configuredatabricks@0
+    displayName: 'Configure Databricks CLI'
+    inputs:
+      url: 'https://$(databricks_host)'
+      token: $(databricks_token)
+
+  - task: Bash@3
+    displayName: Backup old notebooks and copy new ones to Shared folder
+    inputs:
+      targetType: 'inline'
+      script: |
+        export DATABRICKS_HOST=https://$(databricks_host)
+        export DATABRICKS_TOKEN=$(databricks_token)
+        databricks workspace mkdirs "${{ parameters.WorkspaceFolderPath }}/${{ parameters.PortfolioPath }}/${{ parameters.NoteBooksFolderPath }}"
+        databricks workspace export_dir "${{ parameters.WorkspaceFolderPath }}/${{ parameters.PortfolioPath }}/${{ parameters.NoteBooksFolderPath }}" $(Build.Repository.LocalPath)/${{ parameters.NoteBooksFolderPath }}_exported
+        databricks workspace rm --recursive "${{ parameters.WorkspaceFolderPath }}/${{ parameters.PortfolioPath }}/${{ parameters.NoteBooksFolderPath }}"
+        databricks workspace rm --recursive "${{ parameters.WorkspaceFolderPath }}/${{ parameters.PortfolioPath }}/${{ parameters.NoteBooksFolderPath }}_previous"
+        databricks workspace import_dir $(Build.Repository.LocalPath)/${{ parameters.NoteBooksFolderPath }}_exported "${{ parameters.WorkspaceFolderPath }}/${{ parameters.PortfolioPath }}/${{ parameters.NoteBooksFolderPath }}_previous"
+
+  - task: deploynotebooks@0
+    displayName: Deploy notebook files
+    inputs:
+      notebooksFolderPath: $(Build.Repository.LocalPath)/${{ parameters.NoteBooksFolderPath }}
+      workspaceFolder: ${{ parameters.WorkspaceFolderPath }}/${{ parameters.PortfolioPath }}/${{ parameters.NoteBooksFolderPath }}
