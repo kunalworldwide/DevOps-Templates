@@ -1,0 +1,132 @@
+# Trigger: Defines when the pipeline is executed. 
+# In this case, it triggers on any push to the 'main' branch.
+trigger:
+- main
+
+# Parameters: Define variables that can be set at runtime.
+# These parameters allow customization of the Terraform script and Azure environment.
+parameters:
+  - name: Action
+    displayName: Terraform Action
+    type: string
+    default: apply
+    values:
+      - apply
+      - destroy
+    # Action parameter decides whether to apply (create/update) or destroy resources.
+
+  - name: TerraformVersion
+    displayName: Terraform Version
+    type: string
+    default: 'latest'
+    # TerraformVersion allows specifying the version of Terraform to use.
+
+  - name: AzureRMProvider
+    displayName: Azure RM Provider
+    type: string
+    default: 'azurerm'
+    # AzureRMProvider specifies the provider plugin for Azure Resource Manager.
+
+  - name: WorkingDirectory
+    displayName: Working Directory
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/terraform_scripts'
+    # WorkingDirectory is where your Terraform scripts are located in the repo.
+
+  - name: BackendServiceArm
+    displayName: Backend Service ARM
+    type: string
+    default: 'master-subscription-sc'
+    # BackendServiceArm is the Service Connection to Azure.
+
+  - name: BackendResourceGroupName
+    displayName: Backend Resource Group Name
+    type: string
+    default: 'Master-RG'
+    # BackendResourceGroupName specifies the Azure Resource Group for the Terraform backend.
+
+  - name: BackendStorageAccountName
+    displayName: Backend Storage Account Name
+    type: string
+    default: 'backendtfstorageac'
+    # BackendStorageAccountName specifies the Azure Storage Account for Terraform state files.
+
+  - name: BackendContainerName
+    displayName: Backend Container Name
+    type: string
+    default: 'terraform-state'
+    # BackendContainerName is the name of the container in the storage account where the Terraform state file is stored.
+
+  - name: BackendKey
+    displayName: Backend Key
+    type: string
+    default: 'master/rg.tf'
+    # BackendKey is the name of the state file within the specified container.
+
+# Pool: Specifies the type of virtual machine to run the build.
+pool:
+  vmImage: ubuntu-latest
+  # vmImage specifies the VM image to use. Here, it's the latest Ubuntu VM.
+
+# Steps: Define the sequence of tasks that the pipeline will execute.
+steps:
+
+# Print Terraform Action: A simple script step to echo the chosen action.
+- script: |
+    echo "Terraform action: ${{ parameters.Action }}"
+  displayName: 'Print Terraform Action'
+
+# Terraform Installer: Installs the specified version of Terraform.
+- task: TerraformInstaller@0
+  inputs:
+    terraformVersion: ${{ parameters.TerraformVersion }}
+
+# Terraform Initialization: Initializes Terraform with the specified backend and provider.
+- task: TerraformTaskV4@4
+  name: Terraform_Init
+  inputs:
+    provider: ${{ parameters.AzureRMProvider }}
+    command: 'init'
+    workingDirectory: ${{ parameters.WorkingDirectory }}
+    backendServiceArm: ${{ parameters.BackendServiceArm }}
+    backendAzureRmResourceGroupName: ${{ parameters.BackendResourceGroupName }}
+    backendAzureRmStorageAccountName: ${{ parameters.BackendStorageAccountName }}
+    backendAzureRmContainerName: ${{ parameters.BackendContainerName }}
+    backendAzureRmKey: ${{ parameters.BackendKey }}
+
+# Terraform Validation: Validates the Terraform files in the specified directory.
+- task: TerraformTaskV4@4
+  name: Terraform_Validate
+  inputs:
+    provider: ${{ parameters.AzureRMProvider }}
+    command: 'validate'
+    workingDirectory: ${{ parameters.WorkingDirectory }}
+
+# Terraform Plan: Generates an execution plan for Terraform.
+- task: TerraformTaskV4@4
+  name: Terraform_Plan
+  inputs:
+    provider: ${{ parameters.AzureRMProvider }}
+    command: 'plan'
+    environmentServiceNameAzureRM: ${{ parameters.BackendServiceArm }}
+    workingDirectory: ${{ parameters.WorkingDirectory }}
+
+# Terraform Apply: Applies the changes required to reach the desired state of the configuration.
+- task: TerraformTaskV4@4
+  name: Terraform_Apply
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'IndividualCI'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  inputs:
+    provider: ${{ parameters.AzureRMProvider }}
+    command: 'apply'
+    workingDirectory: ${{ parameters.WorkingDirectory }}
+    environmentServiceNameAzureRM: ${{ parameters.BackendServiceArm }}
+
+# Terraform Manual: This step allows for manual execution of Terraform apply/destroy based on the Action parameter.
+- task: TerraformTaskV4@4
+  name: Terraform_Manual
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'IndividualCI'))
+  inputs:
+    provider: ${{ parameters.AzureRMProvider }}
+    command: ${{ parameters.Action }}
+    workingDirectory: ${{ parameters.WorkingDirectory }}
+    environmentServiceNameAzureRM: ${{ parameters.BackendServiceArm }}
