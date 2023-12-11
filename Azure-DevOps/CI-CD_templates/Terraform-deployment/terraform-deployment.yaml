@@ -28,9 +28,9 @@ parameters:
     # AzureRMProvider specifies the provider plugin for Azure Resource Manager.
 
   - name: WorkingDirectory
-    displayName: Working Directory
-    type: string
-    default: '$(System.DefaultWorkingDirectory)/terraform_scripts'
+    displayName: Script Directory (not in root? put dir path eg:folder/script/)
+    type: object
+    default: ''
     # WorkingDirectory is where your Terraform scripts are located in the repo.
 
   - name: BackendServiceArm
@@ -87,7 +87,7 @@ steps:
   inputs:
     provider: ${{ parameters.AzureRMProvider }}
     command: 'init'
-    workingDirectory: ${{ parameters.WorkingDirectory }}
+    workingDirectory: $(System.DefaultWorkingDirectory)/${{ parameters.WorkingDirectory }}
     backendServiceArm: ${{ parameters.BackendServiceArm }}
     backendAzureRmResourceGroupName: ${{ parameters.BackendResourceGroupName }}
     backendAzureRmStorageAccountName: ${{ parameters.BackendStorageAccountName }}
@@ -97,36 +97,29 @@ steps:
 # Terraform Validation: Validates the Terraform files in the specified directory.
 - task: TerraformTaskV4@4
   name: Terraform_Validate
+  condition: succeeded()
   inputs:
     provider: ${{ parameters.AzureRMProvider }}
     command: 'validate'
-    workingDirectory: ${{ parameters.WorkingDirectory }}
+    workingDirectory: $(System.DefaultWorkingDirectory)/${{ parameters.WorkingDirectory }}
 
 # Terraform Plan: Generates an execution plan for Terraform.
 - task: TerraformTaskV4@4
   name: Terraform_Plan
+  condition: succeeded()
   inputs:
     provider: ${{ parameters.AzureRMProvider }}
     command: 'plan'
     environmentServiceNameAzureRM: ${{ parameters.BackendServiceArm }}
-    workingDirectory: ${{ parameters.WorkingDirectory }}
+    workingDirectory: $(System.DefaultWorkingDirectory)/${{ parameters.WorkingDirectory }}
 
-# Terraform Apply: Applies the changes required to reach the desired state of the configuration.
+# Terraform Apply/Delete: Applies/Deletes the changes required to reach the desired state of the configuration.
 - task: TerraformTaskV4@4
-  name: Terraform_Apply
-  condition: and(succeeded(), eq(variables['Build.Reason'], 'IndividualCI'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-  inputs:
-    provider: ${{ parameters.AzureRMProvider }}
-    command: 'apply'
-    workingDirectory: ${{ parameters.WorkingDirectory }}
-    environmentServiceNameAzureRM: ${{ parameters.BackendServiceArm }}
-
-# Terraform Manual: This step allows for manual execution of Terraform apply/destroy based on the Action parameter.
-- task: TerraformTaskV4@4
-  name: Terraform_Manual
-  condition: and(succeeded(), ne(variables['Build.Reason'], 'IndividualCI'))
+  name: Terraform
+  displayName: 'Terraform_${{ parameters.Action }}'
+  condition: succeeded()
   inputs:
     provider: ${{ parameters.AzureRMProvider }}
     command: ${{ parameters.Action }}
-    workingDirectory: ${{ parameters.WorkingDirectory }}
+    workingDirectory: $(System.DefaultWorkingDirectory)/${{ parameters.WorkingDirectory }}
     environmentServiceNameAzureRM: ${{ parameters.BackendServiceArm }}
